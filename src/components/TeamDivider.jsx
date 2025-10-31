@@ -537,22 +537,49 @@ export default function TeamDivider() {
 
     if (found) {
       const key = getParticipantKey(found, headers);
-      const assignments = localStorage.getItem('team_assignments_v13')
-        ? JSON.parse(localStorage.getItem('team_assignments_v13'))
-        : {};
-      const team = assignments[key] || 'Sin asignar';
-
+      
       // Verificar si es staff
       const formaPagoColumn = headers.find(h => 
         h.toLowerCase().includes('forma de pago') || 
         h.toLowerCase().includes('pago')
       );
       const isStaff = formaPagoColumn && found[formaPagoColumn]?.toLowerCase().includes('staff');
+      
+      if (isStaff) {
+        setSearchResult({
+          participant: found,
+          team: 'Staff',
+          color: null
+        });
+        return;
+      }
+
+      // Verificar si es coordinador fijo (por nombre parcial) - ESTO ES LO IMPORTANTE
+      const nombre = found['NOMBRE Y APELLIDO'] || '';
+      const nombreLower = nombre.toLowerCase();
+      const esCoordinador = Object.entries(COORDINADORES_FIJOS).find(([coord,]) => 
+        nombreLower.includes(coord.toLowerCase())
+      );
+
+      if (esCoordinador) {
+        setSearchResult({
+          participant: found,
+          team: esCoordinador[1], // equipo fijo
+          color: COLORS[esCoordinador[1]] || null
+        });
+        return;
+      }
+
+      // Si no es staff ni coordinador, usar asignación normal
+      const assignments = localStorage.getItem('team_assignments_v13')
+        ? JSON.parse(localStorage.getItem('team_assignments_v13'))
+        : {};
+      const team = assignments[key] || 'Sin asignar';
 
       setSearchResult({
         participant: found,
-        team: isStaff ? 'Staff' : team,
-        color: isStaff ? null : COLORS[team] || null
+        team,
+        color: COLORS[team] || null
       });
     } else {
       setSearchResult({ notFound: true });
