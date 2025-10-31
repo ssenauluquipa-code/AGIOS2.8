@@ -34,6 +34,19 @@ const COORDINADORES_FIJOS = {
 };
 
 /**
+ * Normaliza texto para búsqueda (elimina acentos, pasa a minúsculas, etc.)
+ */
+const normalizeText = (text) => {
+  if (!text) return '';
+  return text
+    .toString()
+    .toLowerCase()
+    .normalize('NFD') // Descompone acentos
+    .replace(/[\u0300-\u036f]/g, '') // Elimina acentos
+    .trim();
+};
+
+/**
  * Convierte URL de Google Sheets a CSV
  */
 const convertGoogleSheetsUrl = (url) => {
@@ -549,7 +562,7 @@ export default function TeamDivider() {
   };
 
   /**
-   * Buscar participante (MEJORADA)
+   * Buscar participante (MEJORADA - con normalización de texto)
    */
   const findParticipantByQuery = (query) => {
     if (!query.trim()) {
@@ -557,19 +570,23 @@ export default function TeamDivider() {
       return;
     }
 
-    const lowerQuery = query.toLowerCase().trim();
-    
-    // Buscar participante por nombre o celular (búsqueda flexible)
+    const normalizedQuery = normalizeText(query);
+
+    // Buscar participante por nombre o celular (búsqueda flexible y normalizada)
     const found = participants.find(p => {
-      const nombre = p['NOMBRE Y APELLIDO'] ? String(p['NOMBRE Y APELLIDO']).toLowerCase() : '';
-      const celular = p['ESCRIBE TU NUMERO DE CELULAR'] ? String(p['ESCRIBE TU NUMERO DE CELULAR']).toLowerCase() : '';
+      const nombre = p['NOMBRE Y APELLIDO'] ? String(p['NOMBRE Y APELLIDO']) : '';
+      const celular = p['ESCRIBE TU NUMERO DE CELULAR'] ? String(p['ESCRIBE TU NUMERO DE CELULAR']) : '';
       
-      // Búsqueda parcial más flexible
+      // Normalizar ambos textos
+      const normalizedNombre = normalizeText(nombre);
+      const normalizedCelular = normalizeText(celular);
+
+      // Búsqueda parcial más flexible (con normalización)
       return (
-        nombre.includes(lowerQuery) || 
-        lowerQuery.includes(nombre) ||
-        celular.includes(lowerQuery) ||
-        lowerQuery.includes(celular)
+        normalizedNombre.includes(normalizedQuery) || 
+        normalizedQuery.includes(normalizedNombre) ||
+        normalizedCelular.includes(normalizedQuery) ||
+        normalizedQuery.includes(normalizedCelular)
       );
     });
 
