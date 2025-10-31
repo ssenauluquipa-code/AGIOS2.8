@@ -21,6 +21,18 @@ const ATTENDANCE_KEY = 'team_attendance_v1';
 const GIST_ID = import.meta.env.VITE_GIST_ID || 'b30794fa9e8b8f0aee0f63c2a3558022';
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN; // Puede ser undefined
 
+// Coordinadores fijos (no se reasignan)
+const COORDINADORES_FIJOS = {
+  'filadelfia huallpa': 'Rojo',
+  'rieles onarry tereba': 'Rojo',
+  'maria magdalena bustillos': 'Amarillo',
+  'jose luis calle': 'Amarillo',
+  'ana maria villarpando': 'Verde',
+  'israel condori quispe': 'Verde',
+  'Diana Rodas Aguilar': 'Azul',
+  'santos bustillos': 'Azul'
+};
+
 /**
  * Convierte URL de Google Sheets a CSV
  */
@@ -117,27 +129,78 @@ const loadFromExcelFile = (file) => {
 };
 
 /**
- * Asigna equipos respetando asignaciones existentes
+ * Asigna equipos respetando asignaciones existentes y coordinadores fijos
  */
 const assignTeams = (participants, headers, existingAssignments = {}) => {
-  const assignments = { ...existingAssignments };
-  const unassigned = [];
+  // Detectar columna de forma de pago
+  const formaPagoColumn = headers.find(h => 
+    h.toLowerCase().includes('forma de pago') || 
+    h.toLowerCase().includes('pago')
+  );
 
-  participants.forEach(p => {
-    const key = getParticipantKey(p, headers);
-    if (assignments[key]) {
-      // Ya asignado
+  // Filtrar participantes (excluir staff)
+  const participantesFiltrados = participants.filter(p => {
+    if (!formaPagoColumn) return true; // Si no hay columna, incluir todos
+    const formaPago = p[formaPagoColumn] || '';
+    return !formaPago.toLowerCase().includes('staff');
+  });
+
+  // Separar coordinadores fijos de los participantes normales
+  const coordinadores = [];
+  const otrosParticipantes = [];
+
+  participantesFiltrados.forEach(p => {
+    const nombre = p['NOMBRE Y APELLIDO'] || '';
+    const nombreLower = nombre.toLowerCase();
+
+    // Buscar si es coordinador fijo (por nombre completo o parcial)
+    const esCoordinador = Object.keys(COORDINADORES_FIJOS).some(coord => 
+      nombreLower.includes(coord.toLowerCase())
+    );
+
+    if (esCoordinador) {
+      coordinadores.push(p);
     } else {
-      unassigned.push(p);
+      otrosParticipantes.push(p);
     }
   });
 
+  // Asignar coordinadores fijos
+  const assignments = { ...existingAssignments };
+
+  coordinadores.forEach(p => {
+    const nombre = p['NOMBRE Y APELLIDO'] || '';
+    const nombreLower = nombre.toLowerCase();
+
+    // Encontrar equipo fijo
+    const equipoFijo = Object.entries(COORDINADORES_FIJOS).find(([coord,]) => 
+      nombreLower.includes(coord.toLowerCase())
+    );
+
+    if (equipoFijo) {
+      const key = getParticipantKey(p, headers);
+      assignments[key] = equipoFijo[1]; // equipoFijo[1] = 'Rojo', 'Azul', etc.
+    }
+  });
+
+  // Separar otros participantes en asignados y no asignados
+  const otrosNoAsignados = [];
+  otrosParticipantes.forEach(p => {
+    const key = getParticipantKey(p, headers);
+    if (assignments[key]) {
+      // Ya tiene asignación (de Gist o anterior)
+    } else {
+      otrosNoAsignados.push(p);
+    }
+  });
+
+  // Si no hay asignaciones previas (primera vez), hacer división balanceada
   if (Object.keys(existingAssignments).length === 0) {
     const hombres = [];
     const mujeres = [];
     const otros = [];
 
-    unassigned.forEach(p => {
+    otrosNoAsignados.forEach(p => {
       const genero = (p['SELECCIONA TU GENERO'] || '').toLowerCase().trim();
       if (genero.includes('masculino') || genero.includes('hombre') || genero === 'm') {
         hombres.push(p);
@@ -170,12 +233,14 @@ const assignTeams = (participants, headers, existingAssignments = {}) => {
       assignments[key] = teamName;
     });
   } else {
+    // Si ya hay asignaciones, solo asignar nuevos al equipo más pequeño
+    // Excluir coordinadores fijos de la cuenta
     const teamCounts = TEAM_NAMES.reduce((acc, name) => {
       acc[name] = Object.values(assignments).filter(team => team === name).length;
       return acc;
     }, {});
 
-    unassigned.forEach(p => {
+    otrosNoAsignados.forEach(p => {
       const key = getParticipantKey(p, headers);
       const smallestTeam = TEAM_NAMES.reduce((a, b) => (teamCounts[a] <= teamCounts[b] ? a : b));
       assignments[key] = smallestTeam;
@@ -183,12 +248,13 @@ const assignTeams = (participants, headers, existingAssignments = {}) => {
     });
   }
 
+  // Construir equipos
   const teams = TEAM_NAMES.reduce((acc, name) => {
     acc[name] = [];
     return acc;
   }, {});
 
-  participants.forEach(p => {
+  participantesFiltrados.forEach(p => {
     const key = getParticipantKey(p, headers);
     const team = assignments[key];
     if (team && TEAM_NAMES.includes(team)) {
@@ -265,7 +331,7 @@ const saveAssignmentsToGist = async (assignments, attendance) => {
     console.log('Asignaciones y asistencia guardadas en Gist');
   } catch (err) {
     console.error('Error al guardar en Gist:', err);
-    alert('⚠️ No se pudieron guardar los datos. Los equipos o asistencia podrían cambiar al recargar.');
+    // No mostrar alerta aquí para evitar interrupciones
   }
 };
 
@@ -359,11 +425,36 @@ export default function TeamDivider() {
       // Guardar localmente
       localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(updated));
       
-      // Guardar en Gist también
-      saveAssignmentsToGist(
-        JSON.parse(localStorage.getItem('team_assignments_v13') || '{}'), 
-        updated
-      );
+      // Guardar en Gist también (sin mostrar alerta)
+      const assignments = JSON.parse(localStorage.getItem('team_assignments_v13') || '{}');
+      
+      if (GITHUB_TOKEN) {
+        fetch(`https://api.github.com/gists/${GIST_ID}`, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `token ${GITHUB_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            description: 'Asignaciones de equipos y asistencia para el campamento',
+            files: {
+              'team-assignments.json': {
+                content: JSON.stringify({
+                  assignments,
+                  attendance: updated
+                }, null, 2)
+              }
+            }
+          })
+        })
+        .then(response => {
+          if (!response.ok) throw new Error('No se pudo guardar en el Gist');
+          console.log('Asistencia guardada en Gist');
+        })
+        .catch(err => {
+          console.error('Error al guardar asistencia:', err);
+        });
+      }
       
       return updated;
     });
@@ -465,7 +556,7 @@ export default function TeamDivider() {
         <div className={styles.header}>
           <img src={cjr28Logo} alt="CJR28" />
           <div className={styles.headerText}>
-            <h1>División de Equipos - Campamento AGIOS 2.8</h1>
+            <h1>🎨 División de Equipos - Campamento</h1>
             <p>Participantes asignados por colores • Datos en tiempo real</p>
           </div>
           <div style={{ width: '2.8rem' }}></div>
@@ -475,10 +566,10 @@ export default function TeamDivider() {
           
           {/* Resumen centrado */}
           <div className={styles.summaryCentered}>
-            {/* <div className={styles.summaryRow}>
+            <div className={styles.summaryRow}>
               <span className={styles.summaryLabelCentered}>Total registrados:</span>
               <span className={styles.summaryValueCentered}>{participants.length}</span>
-            </div> */}
+            </div>
             
             {participants.length > 0 && (() => {
               const generos = participants.reduce((acc, p) => {
@@ -489,7 +580,7 @@ export default function TeamDivider() {
               
               return (
                 <div>
-                  {/* <span className={styles.summaryLabelCentered}>Género:</span> */}
+                  <span className={styles.summaryLabelCentered}>Género:</span>
                   <div className={styles.genderTagsCentered}>
                     {Object.entries(generos).map(([gen, count]) => (
                       <span key={gen} className={styles.genderTagCentered}>
@@ -603,9 +694,28 @@ export default function TeamDivider() {
                         const iglesia = member['SELECCIONA TU IGLESIA ( si no aparece tu iglesia puedes escribirlo en "otros" o seleccionar invitado si no asistes a ninguna iglesia)'] || '—';
                         const talla = member['SELECCIONA  TALLA'] || '—';
 
+                        // Verificar si es coordinador fijo
+                        const esCoordinador = Object.keys(COORDINADORES_FIJOS).some(coord => 
+                          nombre.toLowerCase().includes(coord.toLowerCase())
+                        );
+
                         return (
                           <div key={i} className={styles.participantCard}>
-                            <h4>{nombre}</h4>
+                            <h4>
+                              {nombre}
+                              {esCoordinador && (
+                                <span style={{ 
+                                  fontSize: '0.7rem', 
+                                  color: '#ffffff', 
+                                  backgroundColor: '#1e40af', 
+                                  padding: '0.1rem 0.3rem', 
+                                  borderRadius: '10px', 
+                                  marginLeft: '0.3rem' 
+                                }}>
+                                  COORD
+                                </span>
+                              )}
+                            </h4>
                             <div className={styles.participantData}>
                               <div><strong>Edad:</strong> {edad}</div>
                               <div><strong>Talla:</strong> {talla}</div>
