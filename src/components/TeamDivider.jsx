@@ -134,23 +134,46 @@ const loadFromExcelFile = (file) => {
 const assignTeams = (participants, headers, existingAssignments = {}) => {
   // Detectar columna de forma de pago
   const formaPagoColumn = headers.find(h => 
-    h.toLowerCase().includes('forma de pago') || 
-    h.toLowerCase().includes('pago')
+    h === 'SELECCIONA LA FORMA DE PAGO REALIZADO'
   );
 
-  // Filtrar participantes (excluir staff)
-  const participantesFiltrados = participants.filter(p => {
-    if (!formaPagoColumn) return true; // Si no hay columna, incluir todos
+  // Separar staff y no staff
+  const staffList = [];
+  const noStaffList = [];
+
+  participants.forEach(p => {
+    if (!formaPagoColumn) {
+      // Si no hay columna de forma de pago, incluir a todos
+      noStaffList.push(p);
+      return;
+    }
+
     const formaPago = p[formaPagoColumn] || '';
-    return !formaPago.toLowerCase().includes('staff');
+    const isStaff = formaPago.toLowerCase().includes('staff');
+
+    if (isStaff) {
+      // Verificar si es coordinador fijo (no excluirlo)
+      const nombre = p['NOMBRE Y APELLIDO'] || '';
+      const nombreLower = nombre.toLowerCase();
+      const esCoordinadorFijo = Object.keys(COORDINADORES_FIJOS).some(coord => 
+        nombreLower.includes(coord.toLowerCase())
+      );
+
+      if (esCoordinadorFijo) {
+        // Es staff PERO también coordinador fijo → incluirlo
+        noStaffList.push(p);
+      } else {
+        // Es staff normal → excluirlo
+        staffList.push(p);
+      }
+    } else {
+      // No es staff → incluirlo
+      noStaffList.push(p);
+    }
   });
 
-  // Contar staff
-  const staff = participants.filter(p => {
-    if (!formaPagoColumn) return false; // Si no hay columna, nadie es staff
-    const formaPago = p[formaPagoColumn] || '';
-    return formaPago.toLowerCase().includes('staff');
-  });
+  // Ahora trabajar solo con noStaffList (incluye coordinadores fijos aunque sean staff)
+  const participantesFiltrados = noStaffList;
 
   // Separar coordinadores fijos de los participantes normales
   const coordinadores = [];
@@ -293,7 +316,7 @@ const assignTeams = (participants, headers, existingAssignments = {}) => {
     }
   });
 
-  return { teams, assignments, staff };
+  return { teams, assignments, staff: staffList };
 };
 
 /**
@@ -555,12 +578,19 @@ export default function TeamDivider() {
       
       // 1. Verificar si es staff
       const formaPagoColumn = headers.find(h => 
-        h.toLowerCase().includes('forma de pago') || 
-        h.toLowerCase().includes('pago')
+        h === 'SELECCIONA LA FORMA DE PAGO REALIZADO'
       );
       const isStaff = formaPagoColumn && found[formaPagoColumn]?.toLowerCase().includes('staff');
       
-      if (isStaff) {
+      // 2. Verificar si es coordinador fijo (aunque sea staff)
+      const nombre = found['NOMBRE Y APELLIDO'] || '';
+      const nombreLower = nombre.toLowerCase();
+      const esCoordinadorFijo = Object.keys(COORDINADORES_FIJOS).some(coord => 
+        nombreLower.includes(coord.toLowerCase())
+      );
+
+      // Si es staff pero NO es coordinador fijo → mostrar como staff
+      if (isStaff && !esCoordinadorFijo) {
         setSearchResult({
           participant: found,
           team: 'Staff',
@@ -569,9 +599,7 @@ export default function TeamDivider() {
         return;
       }
 
-      // 2. Verificar si es coordinador fijo
-      const nombre = found['NOMBRE Y APELLIDO'] || '';
-      const nombreLower = nombre.toLowerCase();
+      // 3. Verificar si es coordinador fijo
       const esCoordinador = Object.entries(COORDINADORES_FIJOS).find(([coord,]) => 
         nombreLower.includes(coord.toLowerCase())
       );
@@ -585,12 +613,12 @@ export default function TeamDivider() {
         return;
       }
 
-      // 3. Leer asignaciones desde localStorage (guardadas del Gist)
+      // 4. Leer asignaciones desde localStorage (guardadas del Gist)
       const assignments = localStorage.getItem('team_assignments_v13')
         ? JSON.parse(localStorage.getItem('team_assignments_v13'))
         : {};
 
-      // 4. Buscar equipo asignado
+      // 5. Buscar equipo asignado
       const team = assignments[key] || 'Sin asignar';
 
       setSearchResult({
