@@ -196,6 +196,19 @@ const assignTeams = (participants, headers, existingAssignments = {}) => {
 
   // Si no hay asignaciones previas (primera vez), hacer división balanceada
   if (Object.keys(existingAssignments).length === 0) {
+    // Contar cuántos coordinadores hay en cada equipo
+    const coordinadoresPorEquipo = TEAM_NAMES.reduce((acc, name) => {
+      acc[name] = coordinadores.filter(p => {
+        const nombre = p['NOMBRE Y APELLIDO'] || '';
+        const nombreLower = nombre.toLowerCase();
+        const equipoFijo = Object.entries(COORDINADORES_FIJOS).find(([coord,]) => 
+          nombreLower.includes(coord.toLowerCase())
+        );
+        return equipoFijo && equipoFijo[1] === name;
+      }).length;
+      return acc;
+    }, {});
+
     const hombres = [];
     const mujeres = [];
     const otros = [];
@@ -226,11 +239,22 @@ const assignTeams = (participants, headers, existingAssignments = {}) => {
       ...shuffle(otros)
     ];
 
+    // Distribuir equilibradamente, considerando coordinadores fijos
     allShuffled.forEach((person, i) => {
-      const teamIndex = i % 4;
-      const teamName = TEAM_NAMES[teamIndex];
+      // Contar solo los participantes no coordinadores en cada equipo
+      const participantesPorEquipo = TEAM_NAMES.reduce((acc, name) => {
+        acc[name] = Object.values(assignments).filter(team => team === name).length;
+        return acc;
+      }, {});
+
+      // Encontrar el equipo con menos participantes (considerando coordinadores)
+      const smallestTeam = TEAM_NAMES.reduce((a, b) => 
+        (participantesPorEquipo[a] + coordinadoresPorEquipo[a]) <= 
+        (participantesPorEquipo[b] + coordinadoresPorEquipo[b]) ? a : b
+      );
+
       const key = getParticipantKey(person, headers);
-      assignments[key] = teamName;
+      assignments[key] = smallestTeam;
     });
   } else {
     // Si ya hay asignaciones, solo asignar nuevos al equipo más pequeño
@@ -556,7 +580,7 @@ export default function TeamDivider() {
         <div className={styles.header}>
           <img src={cjr28Logo} alt="CJR28" />
           <div className={styles.headerText}>
-            <h1>🎨 División de Equipos - Campamento</h1>
+            <h1>División de Equipos - Campamento AGIOS 2.8</h1>
             <p>Participantes asignados por colores • Datos en tiempo real</p>
           </div>
           <div style={{ width: '2.8rem' }}></div>
@@ -566,10 +590,10 @@ export default function TeamDivider() {
           
           {/* Resumen centrado */}
           <div className={styles.summaryCentered}>
-            <div className={styles.summaryRow}>
+            {/* <div className={styles.summaryRow}>
               <span className={styles.summaryLabelCentered}>Total registrados:</span>
               <span className={styles.summaryValueCentered}>{participants.length}</span>
-            </div>
+            </div> */}
             
             {participants.length > 0 && (() => {
               const generos = participants.reduce((acc, p) => {
@@ -580,7 +604,7 @@ export default function TeamDivider() {
               
               return (
                 <div>
-                  <span className={styles.summaryLabelCentered}>Género:</span>
+                  {/* <span className={styles.summaryLabelCentered}>Género:</span> */}
                   <div className={styles.genderTagsCentered}>
                     {Object.entries(generos).map(([gen, count]) => (
                       <span key={gen} className={styles.genderTagCentered}>
