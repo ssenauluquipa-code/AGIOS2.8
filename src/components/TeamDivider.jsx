@@ -17,9 +17,9 @@ const COLORS = {
 // Claves para localStorage (asistencia)
 const ATTENDANCE_KEY = 'team_attendance_v1';
 
-// Configuración de Gist (usar variables de entorno en producción)
-const GIST_ID = import.meta.env.REACT_APP_GIST_ID || 'b30794fa9e8b8f0aee0f63c2a3558022';
-const GITHUB_TOKEN = import.meta.env.REACT_APP_GITHUB_TOKEN;
+// Configuración de Gist (usar variables de entorno en Vite)
+const GIST_ID = import.meta.env.VITE_GIST_ID || 'b30794fa9e8b8f0aee0f63c2a3558022';
+const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN; // Puede ser undefined
 
 /**
  * Convierte URL de Google Sheets a CSV
@@ -204,7 +204,7 @@ const assignTeams = (participants, headers, existingAssignments = {}) => {
  */
 const loadAssignmentsFromGist = async () => {
   if (!GITHUB_TOKEN) {
-    console.warn('Sin token de GitHub. Usando asignaciones vacías.');
+    // No mostrar advertencia aquí, solo retornar vacío
     return {};
   }
 
@@ -228,7 +228,7 @@ const loadAssignmentsFromGist = async () => {
  */
 const saveAssignmentsToGist = async (assignments) => {
   if (!GITHUB_TOKEN) {
-    console.warn('Sin token de GitHub. No se guardaron asignaciones.');
+    // No mostrar advertencia aquí, solo salir silenciosamente
     return;
   }
 
@@ -426,6 +426,20 @@ export default function TeamDivider() {
     <div className={styles.fullScreen}>
       <div className={styles.mainCard}>
         
+        {/* Indicador visual si no hay token */}
+        {!GITHUB_TOKEN && (
+          <div style={{
+            backgroundColor: '#fef3c7',
+            color: '#92400e',
+            padding: '0.5rem',
+            textAlign: 'center',
+            fontSize: '0.8rem',
+            margin: '0 0.75rem'
+          }}>
+            ⚠️ Sin token de GitHub: las asignaciones no se guardarán
+          </div>
+        )}
+
         <div className={styles.header}>
           <img src={cjr28Logo} alt="CJR28" />
           <div className={styles.headerText}>
