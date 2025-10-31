@@ -4,10 +4,8 @@ import * as XLSX from 'xlsx';
 import styles from './TeamDividir.module.css';
 import cjr28Logo from '../assets/28.png';
 
-// URL de tu Google Sheets (debe ser pública)
+// Configuración
 const INTERNAL_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1X1pIEOd_UPsGjDyBjYMDHqfbAJ6VrWVVDhr2BaAO634/edit?usp=sharing';
-
-// Equipos predefinidos
 const TEAM_NAMES = ['Rojo', 'Azul', 'Verde', 'Amarillo'];
 const COLORS = {
   Rojo: { color: '#EF4444', bg: '#FEE2E2' },
@@ -16,14 +14,15 @@ const COLORS = {
   Amarillo: { color: '#F59E0B', bg: '#FEF3C7' }
 };
 
-// Claves para localStorage
-const STORAGE_KEY = 'team_assignments_v13';
+// Claves para localStorage (asistencia)
 const ATTENDANCE_KEY = 'team_attendance_v1';
 
+// Configuración de Gist (usar variables de entorno en producción)
+const GIST_ID = import.meta.env.REACT_APP_GIST_ID || 'b30794fa9e8b8f0aee0f63c2a3558022';
+const GITHUB_TOKEN = import.meta.env.REACT_APP_GITHUB_TOKEN;
+
 /**
- * Convierte un enlace de Google Sheets en una URL CSV compatible
- * @param {string} url - Enlace de Google Sheets
- * @returns {string} - URL CSV lista para fetch
+ * Convierte URL de Google Sheets a CSV
  */
 const convertGoogleSheetsUrl = (url) => {
   if (url.includes('docs.google.com/spreadsheets')) {
@@ -37,10 +36,7 @@ const convertGoogleSheetsUrl = (url) => {
 };
 
 /**
- * Genera una clave única para cada participante (basada en nombre o celular)
- * @param {Object} participant - Objeto del participante
- * @param {Array} headers - Encabezados del archivo
- * @returns {string} - Clave única
+ * Genera clave única para participante
  */
 const getParticipantKey = (participant, headers) => {
   const nameField = headers.find(h =>
@@ -62,8 +58,6 @@ const getParticipantKey = (participant, headers) => {
 
 /**
  * Carga datos desde Google Sheets
- * @param {string} url - URL del archivo
- * @returns {Promise<{participants: Array, headers: Array}>}
  */
 const loadFromGoogleSheets = async (url) => {
   const csvUrl = convertGoogleSheetsUrl(url);
@@ -87,9 +81,7 @@ const loadFromGoogleSheets = async (url) => {
 };
 
 /**
- * Carga datos desde un archivo Excel local
- * @param {File} file - Archivo subido por el usuario
- * @returns {Promise<{participants: Array, headers: Array}>}
+ * Carga datos desde Excel local
  */
 const loadFromExcelFile = (file) => {
   return new Promise((resolve, reject) => {
@@ -125,29 +117,21 @@ const loadFromExcelFile = (file) => {
 };
 
 /**
- * Asigna participantes a equipos respetando asignaciones previas
- * - Si es la primera vez: divide equilibradamente por género
- * - Si ya hay asignaciones: solo asigna nuevos participantes
- * @param {Array} participants - Lista de participantes
- * @param {Array} headers - Encabezados del archivo
- * @param {Object} existingAssignments - Asignaciones previas (de localStorage)
- * @returns {Object} - { teams, assignments }
+ * Asigna equipos respetando asignaciones existentes
  */
 const assignTeams = (participants, headers, existingAssignments = {}) => {
   const assignments = { ...existingAssignments };
   const unassigned = [];
 
-  // Separar asignados y no asignados
   participants.forEach(p => {
     const key = getParticipantKey(p, headers);
     if (assignments[key]) {
-      // Ya tiene equipo → mantener
+      //
     } else {
       unassigned.push(p);
     }
   });
 
-  // Si no hay asignaciones previas, hacer división balanceada
   if (Object.keys(existingAssignments).length === 0) {
     const hombres = [];
     const mujeres = [];
@@ -186,7 +170,6 @@ const assignTeams = (participants, headers, existingAssignments = {}) => {
       assignments[key] = teamName;
     });
   } else {
-    // Si ya hay asignaciones, solo asignar nuevos al equipo más pequeño
     const teamCounts = TEAM_NAMES.reduce((acc, name) => {
       acc[name] = Object.values(assignments).filter(team => team === name).length;
       return acc;
@@ -200,7 +183,6 @@ const assignTeams = (participants, headers, existingAssignments = {}) => {
     });
   }
 
-  // Construir equipos
   const teams = TEAM_NAMES.reduce((acc, name) => {
     acc[name] = [];
     return acc;
@@ -218,8 +200,63 @@ const assignTeams = (participants, headers, existingAssignments = {}) => {
 };
 
 /**
- * Componente principal de la app
+ * Carga asignaciones desde GitHub Gist
  */
+const loadAssignmentsFromGist = async () => {
+  if (!GITHUB_TOKEN) {
+    console.warn('Sin token de GitHub. Usando asignaciones vacías.');
+    return {};
+  }
+
+  try {
+    const response = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      headers: { 'Authorization': `token ${GITHUB_TOKEN}` }
+    });
+    if (!response.ok) throw new Error('No se pudo cargar el Gist');
+    
+    const data = await response.json();
+    const fileContent = data.files['team-assignments.json']?.content;
+    return fileContent ? JSON.parse(fileContent) : {};
+  } catch (err) {
+    console.warn('Usando asignaciones vacías:', err.message);
+    return {};
+  }
+};
+
+/**
+ * Guarda asignaciones en GitHub Gist
+ */
+const saveAssignmentsToGist = async (assignments) => {
+  if (!GITHUB_TOKEN) {
+    console.warn('Sin token de GitHub. No se guardaron asignaciones.');
+    return;
+  }
+
+  try {
+    const response = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `token ${GITHUB_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        description: 'Asignaciones de equipos para el campamento',
+        files: {
+          'team-assignments.json': {
+            content: JSON.stringify(assignments, null, 2)
+          }
+        }
+      })
+    });
+    
+    if (!response.ok) throw new Error('No se pudo guardar en el Gist');
+    console.log('Asignaciones guardadas en Gist');
+  } catch (err) {
+    console.error('Error al guardar en Gist:', err);
+    alert('⚠️ No se pudieron guardar las asignaciones. Los equipos podrían cambiar al recargar.');
+  }
+};
+
 export default function TeamDivider() {
   const [participants, setParticipants] = useState([]);
   const [headers, setHeaders] = useState([]);
@@ -228,28 +265,32 @@ export default function TeamDivider() {
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResult, setSearchResult] = useState(null);
-  const [attendance, setAttendance] = useState({}); // Estado de asistencia
+  const [attendance, setAttendance] = useState({});
 
   /**
-   * Carga los datos al montar el componente
+   * Carga datos al iniciar
    */
   useEffect(() => {
     const loadData = async () => {
       try {
+        setLoading(true);
+        
+        // Cargar participantes
         const { participants: data, headers: cols } = await loadFromGoogleSheets(INTERNAL_SHEET_URL);
         setHeaders(cols);
         setParticipants(data);
 
-        // Cargar asignaciones previas
-        const savedAssignments = localStorage.getItem(STORAGE_KEY);
-        const existingAssignments = savedAssignments ? JSON.parse(savedAssignments) : {};
+        // Cargar asignaciones desde Gist
+        const existingAssignments = await loadAssignmentsFromGist();
 
         // Asignar equipos
         const { teams: newTeams, assignments } = assignTeams(data, cols, existingAssignments);
         setTeams(newTeams);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(assignments));
 
-        // Cargar asistencia
+        // Guardar en Gist
+        await saveAssignmentsToGist(assignments);
+
+        // Cargar asistencia (local)
         const savedAttendance = localStorage.getItem(ATTENDANCE_KEY);
         if (savedAttendance) {
           setAttendance(JSON.parse(savedAttendance));
@@ -266,7 +307,7 @@ export default function TeamDivider() {
   }, []);
 
   /**
-   * Recarga los datos desde Google Sheets
+   * Recargar desde Google Sheets
    */
   const reloadFromSheet = async () => {
     try {
@@ -275,12 +316,10 @@ export default function TeamDivider() {
       setHeaders(cols);
       setParticipants(data);
 
-      const savedAssignments = localStorage.getItem(STORAGE_KEY);
-      const existingAssignments = savedAssignments ? JSON.parse(savedAssignments) : {};
-
+      const existingAssignments = await loadAssignmentsFromGist();
       const { teams: newTeams, assignments } = assignTeams(data, cols, existingAssignments);
       setTeams(newTeams);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(assignments));
+      await saveAssignmentsToGist(assignments);
 
       const savedAttendance = localStorage.getItem(ATTENDANCE_KEY);
       if (savedAttendance) {
@@ -296,8 +335,7 @@ export default function TeamDivider() {
   };
 
   /**
-   * Alterna el estado de asistencia de un participante
-   * @param {Object} participant - Participante a marcar
+   * Alternar asistencia
    */
   const toggleAttendance = (participant) => {
     const key = getParticipantKey(participant, headers);
@@ -310,7 +348,7 @@ export default function TeamDivider() {
   };
 
   /**
-   * Descarga los equipos en Excel con columna de asistencia
+   * Descargar Excel
    */
   const downloadExcel = () => {
     if (!teams || participants.length === 0) return;
@@ -332,8 +370,7 @@ export default function TeamDivider() {
   };
 
   /**
-   * Busca un participante por nombre o celular
-   * @param {string} query - Texto a buscar
+   * Buscar participante
    */
   const findParticipantByQuery = (query) => {
     if (!query.trim()) {
@@ -350,8 +387,8 @@ export default function TeamDivider() {
 
     if (found) {
       const key = getParticipantKey(found, headers);
-      const assignments = localStorage.getItem(STORAGE_KEY)
-        ? JSON.parse(localStorage.getItem(STORAGE_KEY))
+      const assignments = localStorage.getItem('team_assignments_v13')
+        ? JSON.parse(localStorage.getItem('team_assignments_v13'))
         : {};
       const team = assignments[key] || 'Sin asignar';
 
@@ -365,7 +402,6 @@ export default function TeamDivider() {
     }
   };
 
-  // Pantalla de carga
   if (loading) {
     return (
       <div className={styles.loadingScreen}>
@@ -375,7 +411,6 @@ export default function TeamDivider() {
     );
   }
 
-  // Pantalla de error
   if (error) {
     return (
       <div className={styles.fullScreen} style={{ background: 'linear-gradient(135deg, #ef4444, #f87171)' }}>
@@ -387,12 +422,10 @@ export default function TeamDivider() {
     );
   }
 
-  // Renderizado principal
   return (
     <div className={styles.fullScreen}>
       <div className={styles.mainCard}>
         
-        {/* Header con logo y título */}
         <div className={styles.header}>
           <img src={cjr28Logo} alt="CJR28" />
           <div className={styles.headerText}>
@@ -542,7 +575,7 @@ export default function TeamDivider() {
                               <div><strong>Talla:</strong> {talla}</div>
                               <div><strong>Iglesia:</strong> {iglesia}</div>
                             </div>
-                            {/* Toggle de asistencia en tarjeta */}
+                            {/* Toggle de asistencia */}
                             <div 
                               className={styles.attendanceToggle}
                               onClick={() => toggleAttendance(member)}
