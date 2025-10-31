@@ -126,7 +126,7 @@ const assignTeams = (participants, headers, existingAssignments = {}) => {
   participants.forEach(p => {
     const key = getParticipantKey(p, headers);
     if (assignments[key]) {
-      //
+      // Ya asignado
     } else {
       unassigned.push(p);
     }
@@ -200,12 +200,12 @@ const assignTeams = (participants, headers, existingAssignments = {}) => {
 };
 
 /**
- * Carga asignaciones desde GitHub Gist
+ * Carga asignaciones y asistencia desde GitHub Gist
  */
 const loadAssignmentsFromGist = async () => {
   if (!GITHUB_TOKEN) {
     // No mostrar advertencia aquí, solo retornar vacío
-    return {};
+    return { assignments: {}, attendance: {} };
   }
 
   try {
@@ -216,23 +216,35 @@ const loadAssignmentsFromGist = async () => {
     
     const data = await response.json();
     const fileContent = data.files['team-assignments.json']?.content;
-    return fileContent ? JSON.parse(fileContent) : {};
+    
+    if (!fileContent) return { assignments: {}, attendance: {} };
+    
+    const parsed = JSON.parse(fileContent);
+    return {
+      assignments: parsed.assignments || {},
+      attendance: parsed.attendance || {}
+    };
   } catch (err) {
-    console.warn('Usando asignaciones vacías:', err.message);
-    return {};
+    console.warn('Usando datos vacíos:', err.message);
+    return { assignments: {}, attendance: {} };
   }
 };
 
 /**
- * Guarda asignaciones en GitHub Gist
+ * Guarda asignaciones y asistencia en GitHub Gist
  */
-const saveAssignmentsToGist = async (assignments) => {
+const saveAssignmentsToGist = async (assignments, attendance) => {
   if (!GITHUB_TOKEN) {
     // No mostrar advertencia aquí, solo salir silenciosamente
     return;
   }
 
   try {
+    const gistData = {
+      assignments,
+      attendance
+    };
+
     const response = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
       method: 'PATCH',
       headers: {
@@ -240,20 +252,20 @@ const saveAssignmentsToGist = async (assignments) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        description: 'Asignaciones de equipos para el campamento',
+        description: 'Asignaciones de equipos y asistencia para el campamento',
         files: {
           'team-assignments.json': {
-            content: JSON.stringify(assignments, null, 2)
+            content: JSON.stringify(gistData, null, 2)
           }
         }
       })
     });
     
     if (!response.ok) throw new Error('No se pudo guardar en el Gist');
-    console.log('Asignaciones guardadas en Gist');
+    console.log('Asignaciones y asistencia guardadas en Gist');
   } catch (err) {
     console.error('Error al guardar en Gist:', err);
-    alert('⚠️ No se pudieron guardar las asignaciones. Los equipos podrían cambiar al recargar.');
+    alert('⚠️ No se pudieron guardar los datos. Los equipos o asistencia podrían cambiar al recargar.');
   }
 };
 
@@ -280,21 +292,21 @@ export default function TeamDivider() {
         setHeaders(cols);
         setParticipants(data);
 
-        // Cargar asignaciones desde Gist
-        const existingAssignments = await loadAssignmentsFromGist();
+        // Cargar asignaciones y asistencia desde Gist
+        const { assignments: existingAssignments, attendance: existingAttendance } = await loadAssignmentsFromGist();
 
         // Asignar equipos
         const { teams: newTeams, assignments } = assignTeams(data, cols, existingAssignments);
         setTeams(newTeams);
 
-        // Guardar en Gist
-        await saveAssignmentsToGist(assignments);
+        // Combinar asistencia existente con la local (por si alguien marcó asistencia localmente)
+        const localAttendance = JSON.parse(localStorage.getItem(ATTENDANCE_KEY) || '{}');
+        const combinedAttendance = { ...existingAttendance, ...localAttendance };
+        setAttendance(combinedAttendance);
 
-        // Cargar asistencia (local)
-        const savedAttendance = localStorage.getItem(ATTENDANCE_KEY);
-        if (savedAttendance) {
-          setAttendance(JSON.parse(savedAttendance));
-        }
+        // Guardar en Gist (asignaciones + asistencia combinada)
+        await saveAssignmentsToGist(assignments, combinedAttendance);
+
       } catch (err) {
         console.error('Error al cargar datos:', err);
         setError(err.message || 'Error al cargar el archivo.');
@@ -316,11 +328,12 @@ export default function TeamDivider() {
       setHeaders(cols);
       setParticipants(data);
 
-      const existingAssignments = await loadAssignmentsFromGist();
+      const { assignments: existingAssignments, attendance: existingAttendance } = await loadAssignmentsFromGist();
       const { teams: newTeams, assignments } = assignTeams(data, cols, existingAssignments);
       setTeams(newTeams);
-      await saveAssignmentsToGist(assignments);
+      await saveAssignmentsToGist(assignments, existingAttendance);
 
+      // Cargar asistencia (local)
       const savedAttendance = localStorage.getItem(ATTENDANCE_KEY);
       if (savedAttendance) {
         setAttendance(JSON.parse(savedAttendance));
@@ -335,14 +348,23 @@ export default function TeamDivider() {
   };
 
   /**
-   * Alternar asistencia
+   * Alternar asistencia y guardar en Gist
    */
   const toggleAttendance = (participant) => {
     const key = getParticipantKey(participant, headers);
     setAttendance(prev => {
       const newStatus = !prev[key];
       const updated = { ...prev, [key]: newStatus };
+      
+      // Guardar localmente
       localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(updated));
+      
+      // Guardar en Gist también
+      saveAssignmentsToGist(
+        JSON.parse(localStorage.getItem('team_assignments_v13') || '{}'), 
+        updated
+      );
+      
       return updated;
     });
   };
@@ -443,7 +465,7 @@ export default function TeamDivider() {
         <div className={styles.header}>
           <img src={cjr28Logo} alt="CJR28" />
           <div className={styles.headerText}>
-            <h1>🎨 División de Equipos - Campamento</h1>
+            <h1>División de Equipos - Campamento AGIOS 2.8</h1>
             <p>Participantes asignados por colores • Datos en tiempo real</p>
           </div>
           <div style={{ width: '2.8rem' }}></div>
@@ -453,10 +475,10 @@ export default function TeamDivider() {
           
           {/* Resumen centrado */}
           <div className={styles.summaryCentered}>
-            <div className={styles.summaryRow}>
+            {/* <div className={styles.summaryRow}>
               <span className={styles.summaryLabelCentered}>Total registrados:</span>
               <span className={styles.summaryValueCentered}>{participants.length}</span>
-            </div>
+            </div> */}
             
             {participants.length > 0 && (() => {
               const generos = participants.reduce((acc, p) => {
@@ -467,7 +489,7 @@ export default function TeamDivider() {
               
               return (
                 <div>
-                  <span className={styles.summaryLabelCentered}>Género:</span>
+                  {/* <span className={styles.summaryLabelCentered}>Género:</span> */}
                   <div className={styles.genderTagsCentered}>
                     {Object.entries(generos).map(([gen, count]) => (
                       <span key={gen} className={styles.genderTagCentered}>
