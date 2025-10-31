@@ -408,6 +408,9 @@ export default function TeamDivider() {
         // Guardar en Gist (asignaciones + asistencia + staff)
         await saveAssignmentsToGist(assignments, combinedAttendance, staffList);
 
+        // Guardar asignaciones en localStorage para búsqueda
+        localStorage.setItem('team_assignments_v13', JSON.stringify(assignments));
+
       } catch (err) {
         console.error('Error al cargar datos:', err);
         setError(err.message || 'Error al cargar el archivo.');
@@ -434,6 +437,9 @@ export default function TeamDivider() {
       setTeams(newTeams);
       setStaff(staffList);
       await saveAssignmentsToGist(assignments, existingAttendance, staffList);
+
+      // Guardar en localStorage para búsqueda
+      localStorage.setItem('team_assignments_v13', JSON.stringify(assignments));
 
       // Cargar asistencia (local)
       const savedAttendance = localStorage.getItem(ATTENDANCE_KEY);
@@ -520,7 +526,7 @@ export default function TeamDivider() {
   };
 
   /**
-   * Buscar participante
+   * Buscar participante (MEJORADA)
    */
   const findParticipantByQuery = (query) => {
     if (!query.trim()) {
@@ -529,16 +535,25 @@ export default function TeamDivider() {
     }
 
     const lowerQuery = query.toLowerCase().trim();
+    
+    // Buscar participante por nombre o celular (búsqueda flexible)
     const found = participants.find(p => {
-      const nameValue = p['NOMBRE Y APELLIDO'] ? String(p['NOMBRE Y APELLIDO']).toLowerCase() : '';
-      const phoneValue = p['ESCRIBE TU NUMERO DE CELULAR'] ? String(p['ESCRIBE TU NUMERO DE CELULAR']).toLowerCase() : '';
-      return nameValue.includes(lowerQuery) || phoneValue.includes(lowerQuery);
+      const nombre = p['NOMBRE Y APELLIDO'] ? String(p['NOMBRE Y APELLIDO']).toLowerCase() : '';
+      const celular = p['ESCRIBE TU NUMERO DE CELULAR'] ? String(p['ESCRIBE TU NUMERO DE CELULAR']).toLowerCase() : '';
+      
+      // Búsqueda parcial más flexible
+      return (
+        nombre.includes(lowerQuery) || 
+        lowerQuery.includes(nombre) ||
+        celular.includes(lowerQuery) ||
+        lowerQuery.includes(celular)
+      );
     });
 
     if (found) {
       const key = getParticipantKey(found, headers);
       
-      // Verificar si es staff
+      // 1. Verificar si es staff
       const formaPagoColumn = headers.find(h => 
         h.toLowerCase().includes('forma de pago') || 
         h.toLowerCase().includes('pago')
@@ -554,7 +569,7 @@ export default function TeamDivider() {
         return;
       }
 
-      // Verificar si es coordinador fijo (por nombre parcial) - ESTO ES LO IMPORTANTE
+      // 2. Verificar si es coordinador fijo
       const nombre = found['NOMBRE Y APELLIDO'] || '';
       const nombreLower = nombre.toLowerCase();
       const esCoordinador = Object.entries(COORDINADORES_FIJOS).find(([coord,]) => 
@@ -570,10 +585,12 @@ export default function TeamDivider() {
         return;
       }
 
-      // Si no es staff ni coordinador, usar asignación normal
+      // 3. Leer asignaciones desde localStorage (guardadas del Gist)
       const assignments = localStorage.getItem('team_assignments_v13')
         ? JSON.parse(localStorage.getItem('team_assignments_v13'))
         : {};
+
+      // 4. Buscar equipo asignado
       const team = assignments[key] || 'Sin asignar';
 
       setSearchResult({
